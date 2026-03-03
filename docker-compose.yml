@@ -1,5 +1,19 @@
 version: "3.8"
 services:
+  wa-bridge:
+    build:
+      context: ../ot-wap/sidecar
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - WEBHOOK_URL=http://ot-wap:8080
+    volumes:
+      - wa-auth-state:/app/auth_state
+      - wa-media-cache:/app/media_cache
+    restart: unless-stopped
+
   ot-wap:
     build:
       context: ../ot-wap
@@ -7,11 +21,9 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - WHATSAPP__PHONENUMBERID=${WHATSAPP_PHONE_NUMBER_ID}
-      - WHATSAPP__ACCESSTOKEN=${WHATSAPP_ACCESS_TOKEN}
-      - WHATSAPP__BUSINESSACCOUNTID=${WHATSAPP_BUSINESS_ACCOUNT_ID}
-      - WHATSAPP__WEBHOOKVERIFYTOKEN=${WHATSAPP_WEBHOOK_VERIFY_TOKEN}
-      - WHATSAPP__APIVERSION=v21.0
+      - WHATSAPP__BRIDGEURL=http://wa-bridge:3001
+    depends_on:
+      - wa-bridge
     restart: unless-stopped
 
   tard:
@@ -31,4 +43,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  wa-auth-state:
+  wa-media-cache:
   tard-memory:

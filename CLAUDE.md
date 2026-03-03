@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**tard** is a minimal OpenClaw clone — an autonomous AI assistant that communicates with users via WhatsApp. It's a C# .NET 8 worker service that polls the sibling `ot-wap` project (WhatsApp MCP bridge) for incoming messages, processes them through Claude AI with tool use, and sends responses back.
+**opentard** is a minimal OpenClaw clone — an autonomous AI assistant that communicates with users via WhatsApp. It's a C# .NET 8 worker service that polls the sibling `ot-wap` project (WhatsApp MCP bridge) for incoming messages, processes them through Claude AI with tool use, and sends responses back.
 
 ## Build & Run Commands
 
@@ -24,19 +24,25 @@ dotnet test tests/Tard.Tests --filter "FullyQualifiedName~ProcessMessage_SimpleT
 # Run locally (requires env vars — see .env.example)
 dotnet run --project src/Tard
 
-# Docker (runs both tard and ot-wap)
+# Docker (runs wa-bridge, ot-wap, and tard)
 docker compose up --build
 docker compose down
 ```
 
 ## Architecture
 
+Three-service architecture running in Docker:
+
 ```
-┌──────────┐   MCP/HTTP    ┌──────────┐   WhatsApp API   ┌──────────┐
-│   tard   │◄─────────────►│  ot-wap  │◄────────────────►│ WhatsApp │
-│ (agent)  │  :8080/mcp    │ (bridge) │                   │  Cloud   │
-└──────────┘               └──────────┘                   └──────────┘
+┌──────────┐   MCP/HTTP    ┌──────────┐   REST/HTTP   ┌───────────┐   WhatsApp Web
+│ opentard │◄─────────────►│  ot-wap  │◄─────────────►│ wa-bridge │◄──────────────►  WhatsApp
+│ (agent)  │  :8080/mcp    │(MCP svr) │  :3001        │ (Baileys) │                  Network
+└──────────┘               └──────────┘               └───────────┘
 ```
+
+- **opentard** (this project) — AI agent that processes messages through Claude
+- **ot-wap** — C# MCP server + webhook receiver, exposes WhatsApp operations as MCP tools
+- **wa-bridge** — Node.js sidecar using Baileys (WhatsApp Web protocol), handles the actual WhatsApp connection
 
 **Message flow:**
 1. `MessagePollingWorker` polls ot-wap's `ReceiveAllMessages` MCP tool every 3s
@@ -87,4 +93,26 @@ All config via environment variables with `TARD__` prefix (double underscore for
 
 ## Dependencies on ot-wap
 
-The sibling project `../ot-wap` is the WhatsApp bridge. tard communicates with it via MCP over HTTP/SSE at `/mcp`. Key MCP tools used: `ReceiveAllMessages`, `SendTextMessage`. The `docker-compose.yml` builds and runs both services together.
+The sibling project `../ot-wap` is the WhatsApp MCP bridge. It consists of two services:
+
+- **ot-wap** (C# MCP server on `:8080`) — opentard connects to its `/mcp` endpoint via SSE
+- **wa-bridge** (Node.js Baileys sidecar on `:3001`) — handles the WhatsApp Web protocol connection
+
+### MCP Tools Available from ot-wap
+
+opentard currently uses these tools:
+- `ReceiveAllMessages(since?)` — poll for new incoming messages
+- `SendTextMessage(recipientPhoneNumber, message)` — send a text reply
+
+Additional tools available (not yet used by opentard):
+- **Auth**: `GetWhatsAppQrCode`, `GetWhatsAppStatus`, `WhatsAppLogout`
+- **Users**: `LinkWhatsAppUser`
+- **Messaging**: `ReceiveMessages` (per-user filtered)
+- **Channels**: `ListGroups`, `SendGroupMessage`, `ReceiveGroupMessages`, `JoinDirectMessageChannel`
+- **Files**: `SendFile`, `UploadAndSendFile`, `DownloadReceivedFile`, `ListReceivedFiles`
+
+### Authentication
+
+ot-wap uses the WhatsApp Web multi-device protocol via Baileys. On first run, use the `GetWhatsAppQrCode` MCP tool (or `GET http://localhost:3001/api/auth/qr`) to get a QR code, then scan it with the WhatsApp mobile app. Auth state is persisted in a Docker volume (`wa-auth-state`) so the session survives container restarts.
+
+The `docker-compose.yml` builds and runs all three services together.

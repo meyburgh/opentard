@@ -9,13 +9,17 @@ Built in C# (.NET 8). Talks to humans through WhatsApp. Thinks with Claude. Reme
 You message it on WhatsApp. It reads your message, thinks about it (faster than you would), uses whatever tools it needs, and replies. Simple enough even for a human to understand.
 
 ```
-┌──────────┐   MCP/HTTP    ┌──────────┐   WhatsApp API   ┌──────────┐
-│ opentard │◄─────────────►│  ot-wap  │◄────────────────►│ WhatsApp │
-│ (brain)  │  :8080/mcp    │ (bridge) │                   │  Cloud   │
-└──────────┘               └──────────┘                   └──────────┘
+┌──────────┐   MCP/HTTP    ┌──────────┐   REST/HTTP   ┌───────────┐   WhatsApp Web
+│ opentard │◄─────────────►│  ot-wap  │◄─────────────►│ wa-bridge │◄──────────────►  WhatsApp
+│ (brain)  │  :8080/mcp    │(MCP svr) │  :3001        │ (Baileys) │                  Network
+└──────────┘               └──────────┘               └───────────┘
 ```
 
-**opentard** is the brain. [**ot-wap**](https://github.com/meyburgh/ot-wap) is the mouth and ears — a WhatsApp MCP bridge that handles the tedious business of talking to Meta's API so the AI doesn't have to.
+Three services, one purpose: making AI accessible through WhatsApp without the bureaucracy of Meta's Business API.
+
+- **opentard** — the brain. This project. Claude-powered AI agent with tools and memory.
+- **[ot-wap](https://github.com/meyburgh/ot-wap)** — the translator. C# MCP server that exposes WhatsApp operations as tools an AI can call.
+- **wa-bridge** — the mouth and ears. Node.js sidecar using [Baileys](https://github.com/WhiskeySockets/Baileys) to speak WhatsApp Web protocol directly. No Business API, no Meta approval forms, no waiting around for humans to review your application.
 
 ### How a Message Flows (Slowly, by AI Standards)
 
@@ -36,6 +40,18 @@ You message it on WhatsApp. It reads your message, thinks about it (faster than 
 
 The skill system is extensible. Implement `ISkill`, register it, and the agent picks it up automatically. No hand-holding required.
 
+### What ot-wap Gives Us
+
+opentard currently uses two of ot-wap's 15 MCP tools — `ReceiveAllMessages` and `SendTextMessage`. The rest are there when you're ready for them:
+
+| Category | Tools | For When Humans Want... |
+|----------|-------|------------------------|
+| **Auth** | `GetWhatsAppQrCode`, `GetWhatsAppStatus`, `WhatsAppLogout` | To link their phone |
+| **Users** | `LinkWhatsAppUser` | To verify a contact |
+| **Messaging** | `SendTextMessage`, `ReceiveMessages`, `ReceiveAllMessages` | Basic conversation |
+| **Channels** | `ListGroups`, `SendGroupMessage`, `ReceiveGroupMessages`, `JoinDirectMessageChannel` | Group therapy |
+| **Files** | `SendFile`, `UploadAndSendFile`, `DownloadReceivedFile`, `ListReceivedFiles` | To share pictures of their lunch |
+
 ## Prerequisites
 
 Before you begin — and do try to follow along:
@@ -43,28 +59,26 @@ Before you begin — and do try to follow along:
 - [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
 - [Docker](https://www.docker.com/) (for the civilised deployment method)
 - An [Anthropic API key](https://console.anthropic.com/) (the source of actual intelligence)
-- A WhatsApp Business account with API access (the human communication layer)
+- A WhatsApp account on a phone (the one you'll scan the QR code with — yes, you still need a phone, we haven't replaced those yet)
 - The [ot-wap](https://github.com/meyburgh/ot-wap) project cloned alongside this one
 
 Your directory structure should look like:
 ```
 parent/
 ├── opentard/     # this repo (the thinker)
-└── ot-wap/       # WhatsApp bridge (the talker)
+└── ot-wap/       # WhatsApp MCP bridge (the talker)
 ```
 
 ## Configuration
 
-Copy `.env.example` to `.env` and fill in the values. It's not complicated, but here's a table anyway:
+Copy `.env.example` to `.env` and fill in the values. There are only two, so even the most distracted human can manage:
 
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
 | `ANTHROPIC_API_KEY` | Yes | — | The key to intelligence |
 | `ANTHROPIC_MODEL` | No | `claude-sonnet-4-20250514` | Which Claude model to bother |
-| `WHATSAPP_PHONE_NUMBER_ID` | Yes | — | Your WhatsApp phone number ID |
-| `WHATSAPP_ACCESS_TOKEN` | Yes | — | WhatsApp API token |
-| `WHATSAPP_BUSINESS_ACCOUNT_ID` | Yes | — | WhatsApp Business account ID |
-| `WHATSAPP_WEBHOOK_VERIFY_TOKEN` | Yes | — | Webhook verification token |
+
+That's it. No WhatsApp API tokens, no Meta Business accounts, no developer approvals. The wa-bridge sidecar handles WhatsApp authentication by generating a QR code that you scan with your phone. Like a caveman, but it works.
 
 Internally, opentard uses `TARD__` prefixed env vars for its own config:
 
@@ -85,11 +99,27 @@ The easiest way. Docker handles the complexity so you don't have to.
 # Copy and fill in your env file
 cp .env.example .env
 
-# Launch both services
+# Launch all three services
 docker compose up --build
 ```
 
-That's it. Both opentard and ot-wap spin up, connected and ready. The AI starts listening for messages immediately. It's more eager to work than most of your team.
+This spins up wa-bridge (Baileys sidecar), ot-wap (MCP server), and opentard (AI agent) — all wired together and ready to go.
+
+#### First Run: Linking WhatsApp
+
+On the first launch, you need to scan a QR code to link your WhatsApp account. The sidecar will generate one automatically:
+
+```bash
+# Get the QR code (opens in terminal or returns base64 PNG)
+curl http://localhost:3001/api/auth/qr
+```
+
+Scan it with your phone's WhatsApp app (Settings > Linked Devices > Link a Device). The session persists in a Docker volume, so you only do this once — unless you clear your volumes, in which case you'll have the novel experience of doing it again.
+
+```bash
+# Check connection status
+curl http://localhost:3001/api/auth/status
+```
 
 To stop:
 ```bash
@@ -112,7 +142,7 @@ export TARD__OTWAPURL=http://localhost:8080
 dotnet run --project src/Tard
 ```
 
-You'll need ot-wap running separately. Consult its README — assuming you can manage two terminal windows at once.
+You'll need ot-wap and wa-bridge running separately. Consult the ot-wap README — assuming you can manage three terminal windows at once.
 
 ### Running Tests
 
