@@ -1,0 +1,34 @@
+version: "3.8"
+services:
+  ot-wap:
+    build:
+      context: ../ot-wap
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - WHATSAPP__PHONENUMBERID=${WHATSAPP_PHONE_NUMBER_ID}
+      - WHATSAPP__ACCESSTOKEN=${WHATSAPP_ACCESS_TOKEN}
+      - WHATSAPP__BUSINESSACCOUNTID=${WHATSAPP_BUSINESS_ACCOUNT_ID}
+      - WHATSAPP__WEBHOOKVERIFYTOKEN=${WHATSAPP_WEBHOOK_VERIFY_TOKEN}
+      - WHATSAPP__APIVERSION=v21.0
+    restart: unless-stopped
+
+  tard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - ot-wap
+    environment:
+      - TARD__OTWAPURL=http://ot-wap:8080
+      - TARD__ANTHROPICAPIKEY=${ANTHROPIC_API_KEY}
+      - TARD__ANTHROPICMODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-20250514}
+      - TARD__POLLINGINTERVALMS=3000
+      - TARD__MEMORYSTOREPATH=/data/memory
+    volumes:
+      - tard-memory:/data/memory
+    restart: unless-stopped
+
+volumes:
+  tard-memory:
